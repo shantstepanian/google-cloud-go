@@ -1583,6 +1583,9 @@ type ClusterInfo struct {
 
 	// AutoscalingConfig are the configured values for a cluster.
 	AutoscalingConfig *AutoscalingConfig
+
+	// comment tbd
+	NodeScalingFactor NodeScalingFactor
 }
 
 // CreateCluster creates a new cluster in an instance.
