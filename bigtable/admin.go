@@ -1198,6 +1198,9 @@ type InstanceConf struct {
 	// AutoscalingConfig configures the autoscaling properties on the cluster
 	// created with the instance. It is optional.
 	AutoscalingConfig *AutoscalingConfig
+
+	// Insert comment here
+	NodeScalingFactor NodeScalingFactor
 }
 
 // InstanceWithClustersConfig contains the information necessary to create an Instance
@@ -1227,6 +1230,7 @@ func (iac *InstanceAdminClient) CreateInstance(ctx context.Context, conf *Instan
 				NumNodes:          conf.NumNodes,
 				StorageType:       conf.StorageType,
 				AutoscalingConfig: conf.AutoscalingConfig,
+				NodeScalingFactor: conf.NodeScalingFactor,
 			},
 		},
 	}
@@ -1467,6 +1471,29 @@ func (a *AutoscalingConfig) proto() *btapb.Cluster_ClusterAutoscalingConfig {
 	}
 }
 
+// NodeScalingFactor is the type of storage used for all tables in an instance
+type NodeScalingFactor int
+
+const (
+	NODE_SCALING_FACTOR_1X NodeScalingFactor = iota
+	NODE_SCALING_FACTOR_2X
+)
+
+func (st NodeScalingFactor) proto() btapb.Cluster_NodeScalingFactor {
+	if st == NODE_SCALING_FACTOR_2X {
+		return btapb.Cluster_NODE_SCALING_FACTOR_2X
+	}
+	return btapb.Cluster_NODE_SCALING_FACTOR_1X
+}
+
+func nodeScalingFactorFromProto(st btapb.Cluster_NodeScalingFactor) NodeScalingFactor {
+	if st == btapb.Cluster_NODE_SCALING_FACTOR_2X {
+		return NODE_SCALING_FACTOR_2X
+	}
+
+	return NODE_SCALING_FACTOR_1X
+}
+
 // ClusterConfig contains the information necessary to create a cluster
 type ClusterConfig struct {
 	// InstanceID specifies the unique name of the instance. Required.
@@ -1508,6 +1535,9 @@ type ClusterConfig struct {
 	// AutoscalingConfig configures the autoscaling properties on a cluster.
 	// One of NumNodes or AutoscalingConfig is required.
 	AutoscalingConfig *AutoscalingConfig
+
+	// Unit of scaling that allows more performance.
+	NodeScalingFactor NodeScalingFactor
 }
 
 func (cc *ClusterConfig) proto(project string) *btapb.Cluster {
@@ -1518,6 +1548,7 @@ func (cc *ClusterConfig) proto(project string) *btapb.Cluster {
 		EncryptionConfig: &btapb.Cluster_EncryptionConfig{
 			KmsKeyName: cc.KMSKeyName,
 		},
+		NodeScalingFactor: cc.NodeScalingFactor.proto(),
 	}
 
 	if asc := cc.AutoscalingConfig; asc != nil {
@@ -1700,12 +1731,13 @@ func (iac *InstanceAdminClient) GetCluster(ctx context.Context, instanceID, clus
 	nameParts := strings.Split(c.Name, "/")
 	locParts := strings.Split(c.Location, "/")
 	ci := &ClusterInfo{
-		Name:        nameParts[len(nameParts)-1],
-		Zone:        locParts[len(locParts)-1],
-		ServeNodes:  int(c.ServeNodes),
-		State:       c.State.String(),
-		StorageType: storageTypeFromProto(c.DefaultStorageType),
-		KMSKeyName:  kmsKeyName,
+		Name:              nameParts[len(nameParts)-1],
+		Zone:              locParts[len(locParts)-1],
+		ServeNodes:        int(c.ServeNodes),
+		State:             c.State.String(),
+		StorageType:       storageTypeFromProto(c.DefaultStorageType),
+		KMSKeyName:        kmsKeyName,
+		NodeScalingFactor: nodeScalingFactorFromProto(c.NodeScalingFactor),
 	}
 	// Use type assertion to handle protobuf oneof type
 	if cfg := c.GetClusterConfig(); cfg != nil {

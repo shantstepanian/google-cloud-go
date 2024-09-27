@@ -4196,6 +4196,111 @@ func TestIntegration_DataAuthorizedView(t *testing.T) {
 	}
 }
 
+// Test Node Scaling Facotry
+func TestIntegration_AdminCreateInstance(t *testing.T) {
+	if instanceToCreate == "" {
+		t.Skip("instanceToCreate not set, skipping instance creation testing")
+	}
+	instanceToCreate += "0"
+
+	testEnv, err := NewIntegrationEnv()
+	if err != nil {
+		t.Fatalf("IntegrationEnv: %v", err)
+	}
+	defer testEnv.Close()
+
+	if !testEnv.Config().UseProd {
+		t.Skip("emulator doesn't support instance creation")
+	}
+
+	timeout := 7 * time.Minute
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	iAdminClient, err := testEnv.NewInstanceAdminClient()
+	if err != nil {
+		t.Fatalf("NewInstanceAdminClient: %v", err)
+	}
+	defer iAdminClient.Close()
+
+	clusterID := instanceToCreate + "-cluster"
+
+	// Create a development instance
+	conf := &InstanceConf{
+		InstanceId:   instanceToCreate,
+		ClusterId:    clusterID,
+		DisplayName:  "test instance",
+		Zone:         instanceToCreateZone,
+		InstanceType: DEVELOPMENT,
+		Labels:       map[string]string{"test-label-key": "test-label-value"},
+	}
+
+	// CreateInstance can be flaky; retry 3 times before marking as failing.
+	testutil.Retry(t, 3, 5*time.Second, func(r *testutil.R) {
+		if err := iAdminClient.CreateInstance(ctx, conf); err != nil {
+			t.Fatalf("CreateInstance: %v", err)
+		}
+	})
+
+	defer iAdminClient.DeleteInstance(ctx, instanceToCreate)
+
+	iInfo, err := iAdminClient.InstanceInfo(ctx, instanceToCreate)
+	if err != nil {
+		t.Fatalf("InstanceInfo: %v", err)
+	}
+
+	// Basic return values are tested elsewhere, check instance type
+	if iInfo.InstanceType != DEVELOPMENT {
+		t.Fatalf("Instance is not DEVELOPMENT: %v", iInfo.InstanceType)
+	}
+	if got, want := iInfo.Labels, conf.Labels; !cmp.Equal(got, want) {
+		t.Fatalf("Labels: %v, want: %v", got, want)
+	}
+
+	// Update everything we can about the instance in one call.
+	confWithClusters := &InstanceWithClustersConfig{
+		InstanceID:   instanceToCreate,
+		DisplayName:  "new display name",
+		InstanceType: PRODUCTION,
+		Labels:       map[string]string{"new-label-key": "new-label-value"},
+		Clusters: []ClusterConfig{
+			{ClusterID: clusterID, NumNodes: 5},
+		},
+	}
+
+	if err = iAdminClient.UpdateInstanceWithClusters(ctx, confWithClusters); err != nil {
+		t.Fatalf("UpdateInstanceWithClusters: %v", err)
+	}
+
+	iInfo, err = iAdminClient.InstanceInfo(ctx, instanceToCreate)
+	if err != nil {
+		t.Fatalf("InstanceInfo: %v", err)
+	}
+
+	if iInfo.InstanceType != PRODUCTION {
+		t.Fatalf("Instance type is not PRODUCTION: %v", iInfo.InstanceType)
+	}
+	if got, want := iInfo.Labels, confWithClusters.Labels; !cmp.Equal(got, want) {
+		t.Fatalf("Labels: %v, want: %v", got, want)
+	}
+	if got, want := iInfo.DisplayName, confWithClusters.DisplayName; got != want {
+		t.Fatalf("Display name: %q, want: %q", got, want)
+	}
+
+	cInfo, err := iAdminClient.GetCluster(ctx, instanceToCreate, clusterID)
+	if err != nil {
+		t.Fatalf("GetCluster: %v", err)
+	}
+
+	if cInfo.ServeNodes != 5 {
+		t.Fatalf("NumNodes: %v, want: %v", cInfo.ServeNodes, 5)
+	}
+
+	if cInfo.KMSKeyName != "" {
+		t.Fatalf("KMSKeyName: %v, want: %v", cInfo.KMSKeyName, "")
+	}
+}
+
 // TestIntegration_DirectPathFallback tests the CFE fallback when the directpath net is blackholed.
 func TestIntegration_DirectPathFallback(t *testing.T) {
 	ctx := context.Background()
